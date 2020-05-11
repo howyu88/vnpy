@@ -3,10 +3,11 @@ Global setting of VN Trader.
 """
 
 from logging import CRITICAL
+from typing import Dict, Any
 
 from .utility import load_json
 
-SETTINGS = {
+SETTINGS: Dict[str, Any] = {
     "font.family": "Arial",
     "font.size": 12,
 
@@ -32,13 +33,15 @@ SETTINGS = {
     "database.user": "root",
     "database.password": "",
     "database.authentication_source": "admin",  # for mongodb
+
+    "huafu.data_source": ""  # 华富资产自建数据源
 }
 
 # Load global setting from json file.
-SETTING_FILENAME = "vt_setting.json"
-SETTINGS.update(load_json(SETTING_FILENAME))
+SETTING_FILENAME: str = "vt_setting.json"
+SETTINGS.update(load_json(SETTING_FILENAME, auto_save=False))
 
 
-def get_settings(prefix: str = ""):
+def get_settings(prefix: str = "") -> Dict[str, Any]:
     prefix_length = len(prefix)
     return {k[prefix_length:]: v for k, v in SETTINGS.items() if k.startswith(prefix)}

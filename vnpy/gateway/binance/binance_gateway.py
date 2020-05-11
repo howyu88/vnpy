@@ -37,7 +37,6 @@ from vnpy.trader.object import (
 from vnpy.trader.event import EVENT_TIMER
 from vnpy.event import Event
 
-
 REST_HOST = "https://www.binance.com"
 WEBSOCKET_TRADE_HOST = "wss://stream.binance.com:9443/ws/"
 WEBSOCKET_DATA_HOST = "wss://stream.binance.com:9443/stream?streams="
@@ -99,9 +98,9 @@ class BinanceGateway(BaseGateway):
 
     exchanges = [Exchange.BINANCE]
 
-    def __init__(self, event_engine):
+    def __init__(self, event_engine, gateway_name="BINANCE"):
         """Constructor"""
-        super().__init__(event_engine, "BINANCE")
+        super().__init__(event_engine, gateway_name)
 
         self.trade_ws_api = BinanceTradeWebsocketApi(self)
         self.market_ws_api = BinanceDataWebsocketApi(self)
@@ -154,6 +153,10 @@ class BinanceGateway(BaseGateway):
     def process_timer_event(self, event: Event):
         """"""
         self.rest_api.keep_user_stream()
+        if self.status.get('td_con', False) \
+                and self.status.get('tdws_con', False) \
+                and self.status.get('mdws_con', False):
+            self.status.update({'con': True})
 
 
 class BinanceRestApi(RestClient):
@@ -231,12 +234,12 @@ class BinanceRestApi(RestClient):
         return request
 
     def connect(
-        self,
-        key: str,
-        secret: str,
-        session_number: int,
-        proxy_host: str,
-        proxy_port: int
+            self,
+            key: str,
+            secret: str,
+            session_number: int,
+            proxy_host: str,
+            proxy_port: int
     ):
         """
         Initialize connection to REST server.
@@ -247,14 +250,14 @@ class BinanceRestApi(RestClient):
         self.proxy_host = proxy_host
 
         self.connect_time = (
-            int(datetime.now().strftime("%y%m%d%H%M%S")) * self.order_count
+                int(datetime.now().strftime("%y%m%d%H%M%S")) * self.order_count
         )
 
         self.init(REST_HOST, proxy_host, proxy_port)
         self.start(session_number)
 
         self.gateway.write_log("REST API启动成功")
-
+        self.gateway.status.update({'md_con': True, 'md_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
         self.query_time()
         self.query_account()
         self.query_order()
@@ -388,8 +391,9 @@ class BinanceRestApi(RestClient):
     def keep_user_stream(self):
         """"""
         self.keep_alive_count += 1
-        if self.keep_alive_count < 1800:
+        if self.keep_alive_count < 600:
             return
+        self.keep_alive_count = 0
 
         data = {
             "security": Security.API_KEY
@@ -500,7 +504,7 @@ class BinanceRestApi(RestClient):
         self.gateway.write_log(msg)
 
     def on_send_order_error(
-        self, exception_type: type, exception_value: Exception, tb, request: Request
+            self, exception_type: type, exception_value: Exception, tb, request: Request
     ):
         """
         Callback when sending order caused exception.
@@ -541,13 +545,13 @@ class BinanceRestApi(RestClient):
                 "symbol": req.symbol,
                 "interval": INTERVAL_VT2BINANCE[req.interval],
                 "limit": limit,
-                "startTime": start_time * 1000,         # convert to millisecond
+                "startTime": start_time * 1000,  # convert to millisecond
             }
 
             # Add end time if specified
             if req.end:
                 end_time = int(datetime.timestamp(req.end))
-                params["endTime"] = end_time * 1000     # convert to millisecond
+                params["endTime"] = end_time * 1000  # convert to millisecond
 
             # Get response from server
             resp = self.request(
@@ -572,7 +576,7 @@ class BinanceRestApi(RestClient):
                 buf = []
 
                 for l in data:
-                    dt = datetime.fromtimestamp(l[0] / 1000)    # convert to second
+                    dt = datetime.fromtimestamp(l[0] / 1000)  # convert to second
 
                     bar = BarData(
                         symbol=req.symbol,
@@ -624,6 +628,7 @@ class BinanceTradeWebsocketApi(WebsocketClient):
     def on_connected(self):
         """"""
         self.gateway.write_log("交易Websocket API连接成功")
+        self.gateway.status.update({'tdws_con': True, 'tdws_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def on_packet(self, packet: dict):  # type: (dict)->None
         """"""
@@ -713,6 +718,7 @@ class BinanceDataWebsocketApi(WebsocketClient):
     def on_connected(self):
         """"""
         self.gateway.write_log("行情Websocket API连接刷新")
+        self.gateway.status.update({'mdws_con': True, 'mdws_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def subscribe(self, req: SubscribeRequest):
         """"""

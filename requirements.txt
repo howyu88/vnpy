@@ -5,11 +5,9 @@ qdarkstyle
 requests
 websocket-client
 peewee
-pymysql
-psycopg2
 mongoengine
 numpy
-pandas>=0.24.2
+pandas
 matplotlib
 seaborn
 futu-api
@@ -19,5 +17,7 @@ ta-lib
 ibapi
 deap
 pyzmq
-wmi
 QScintilla
+pytdx
+pykalman
+cython

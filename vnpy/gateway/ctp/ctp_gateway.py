@@ -1,5 +1,6 @@
 """
 """
+import sys
 import traceback
 import json
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from vnpy.api.ctp import (
     THOST_FTDC_OFEN_CloseToday,
     THOST_FTDC_PC_Futures,
     THOST_FTDC_PC_Options,
+    THOST_FTDC_PC_SpotOption,
     THOST_FTDC_PC_Combination,
     THOST_FTDC_CP_CallOptions,
     THOST_FTDC_CP_PutOptions,
@@ -82,7 +84,7 @@ from vnpy.data.tdx.tdx_common import (
     get_cache_json,
     save_cache_json,
     TDX_FUTURE_CONFIG)
-from vnpy.app.cta_strategy_pro.base import (
+from vnpy.component.base import (
     MARKET_DAY_ONLY, NIGHT_MARKET_23, NIGHT_MARKET_SQ2
 )
 
@@ -131,6 +133,7 @@ EXCHANGE_CTP2VT = {
 PRODUCT_CTP2VT = {
     THOST_FTDC_PC_Futures: Product.FUTURES,
     THOST_FTDC_PC_Options: Product.OPTION,
+    THOST_FTDC_PC_SpotOption: Product.OPTION,
     THOST_FTDC_PC_Combination: Product.SPREAD
 }
 
@@ -138,6 +141,8 @@ OPTIONTYPE_CTP2VT = {
     THOST_FTDC_CP_CallOptions: OptionType.CALL,
     THOST_FTDC_CP_PutOptions: OptionType.PUT
 }
+
+MAX_FLOAT = sys.float_info.max
 
 symbol_exchange_map = {}
 symbol_name_map = {}
@@ -171,9 +176,9 @@ class CtpGateway(BaseGateway):
     # }
     exchanges = list(EXCHANGE_CTP2VT.values())
 
-    def __init__(self, event_engine):
+    def __init__(self, event_engine, gateway_name="CTP"):
         """Constructor"""
-        super().__init__(event_engine, "CTP")
+        super().__init__(event_engine, gateway_name)
 
         self.td_api = None
         self.md_api = None
@@ -217,7 +222,7 @@ class CtpGateway(BaseGateway):
             self.combiner_conf_dict = c.get_config()
             if len(self.combiner_conf_dict) > 0:
                 self.write_log(u'加载的自定义价差/价比配置:{}'.format(self.combiner_conf_dict))
-        except Exception as ex:
+        except Exception as ex:  # noqa
             pass
         if not self.td_api:
             self.td_api = CtpTdApi(self)
@@ -256,6 +261,10 @@ class CtpGateway(BaseGateway):
 
     def check_status(self):
         """检查状态"""
+
+        if self.td_api.connect_status and self.md_api.connect_status:
+            self.status.update({'con': True})
+
         if self.tdx_api:
             self.tdx_api.check_status()
         if self.tdx_api is None or self.md_api is None:
@@ -356,6 +365,7 @@ class CtpGateway(BaseGateway):
     def cancel_order(self, req: CancelRequest):
         """"""
         self.td_api.cancel_order(req)
+        return True
 
     def query_account(self):
         """"""
@@ -443,6 +453,7 @@ class CtpMdApi(MdApi):
         """
         self.gateway.write_log("行情服务器连接成功")
         self.login()
+        self.gateway.status.update({'md_con': True, 'md_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def onFrontDisconnected(self, reason: int):
         """
@@ -450,6 +461,7 @@ class CtpMdApi(MdApi):
         """
         self.login_status = False
         self.gateway.write_log(f"行情服务器连接断开，原因{reason}")
+        self.gateway.status.update({'md_con': False, 'md_dis_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def onRspUserLogin(self, data: dict, error: dict, reqid: int, last: bool):
         """
@@ -508,37 +520,37 @@ class CtpMdApi(MdApi):
             last_price=data["LastPrice"],
             limit_up=data["UpperLimitPrice"],
             limit_down=data["LowerLimitPrice"],
-            open_price=data["OpenPrice"],
-            high_price=data["HighestPrice"],
-            low_price=data["LowestPrice"],
-            pre_close=data["PreClosePrice"],
-            bid_price_1=data["BidPrice1"],
-            ask_price_1=data["AskPrice1"],
+            open_price=adjust_price(data["OpenPrice"]),
+            high_price=adjust_price(data["HighestPrice"]),
+            low_price=adjust_price(data["LowestPrice"]),
+            pre_close=adjust_price(data["PreClosePrice"]),
+            bid_price_1=adjust_price(data["BidPrice1"]),
+            ask_price_1=adjust_price(data["AskPrice1"]),
             bid_volume_1=data["BidVolume1"],
             ask_volume_1=data["AskVolume1"],
             gateway_name=self.gateway_name
         )
 
-        if data["BidPrice2"]:
-            tick.bid_price_2 = data["BidPrice2"]
-            tick.bid_price_3 = data["BidPrice3"]
-            tick.bid_price_4 = data["BidPrice4"]
-            tick.bid_price_5 = data["BidPrice5"]
+        if data["BidVolume2"] or data["AskVolume2"]:
+            tick.bid_price_2 = adjust_price(data["BidPrice2"])
+            tick.bid_price_3 = adjust_price(data["BidPrice3"])
+            tick.bid_price_4 = adjust_price(data["BidPrice4"])
+            tick.bid_price_5 = adjust_price(data["BidPrice5"])
 
-            tick.ask_price_2 = data["AskPrice2"]
-            tick.ask_price_3 = data["AskPrice3"]
-            tick.ask_price_4 = data["AskPrice4"]
-            tick.ask_price_5 = data["AskPrice5"]
+            tick.ask_price_2 = adjust_price(data["AskPrice2"])
+            tick.ask_price_3 = adjust_price(data["AskPrice3"])
+            tick.ask_price_4 = adjust_price(data["AskPrice4"])
+            tick.ask_price_5 = adjust_price(data["AskPrice5"])
 
-            tick.bid_volume_2 = data["BidVolume2"]
-            tick.bid_volume_3 = data["BidVolume3"]
-            tick.bid_volume_4 = data["BidVolume4"]
-            tick.bid_volume_5 = data["BidVolume5"]
+            tick.bid_volume_2 = adjust_price(data["BidVolume2"])
+            tick.bid_volume_3 = adjust_price(data["BidVolume3"])
+            tick.bid_volume_4 = adjust_price(data["BidVolume4"])
+            tick.bid_volume_5 = adjust_price(data["BidVolume5"])
 
-            tick.ask_volume_2 = data["AskVolume2"]
-            tick.ask_volume_3 = data["AskVolume3"]
-            tick.ask_volume_4 = data["AskVolume4"]
-            tick.ask_volume_5 = data["AskVolume5"]
+            tick.ask_volume_2 = adjust_price(data["AskVolume2"])
+            tick.ask_volume_3 = adjust_price(data["AskVolume3"])
+            tick.ask_volume_4 = adjust_price(data["AskVolume4"])
+            tick.ask_volume_5 = adjust_price(data["AskVolume5"])
 
         self.gateway.on_tick(tick)
         self.gateway.on_custom_tick(tick)
@@ -628,6 +640,8 @@ class CtpTdApi(TdApi):
         self.sysid_orderid_map = {}
         self.future_contract_changed = False
 
+        self.accountid = ""
+
     def onFrontConnected(self):
         """"""
         self.gateway.write_log("交易服务器连接成功")
@@ -636,11 +650,13 @@ class CtpTdApi(TdApi):
             self.authenticate()
         else:
             self.login()
+            self.gateway.status.update({'td_con': True, 'td_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def onFrontDisconnected(self, reason: int):
         """"""
         self.login_status = False
         self.gateway.write_log(f"交易服务器连接断开，原因{reason}")
+        self.gateway.status.update({'td_con': True, 'td_dis_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
     def onRspAuthenticate(self, data: dict, error: dict, reqid: int, last: bool):
         """"""
@@ -679,10 +695,22 @@ class CtpTdApi(TdApi):
         symbol = data["InstrumentID"]
         exchange = symbol_exchange_map[symbol]
 
+        order_type = OrderType.LIMIT
+        if data["OrderPriceType"] == THOST_FTDC_OPT_LimitPrice and data["TimeCondition"] == THOST_FTDC_TC_IOC:
+            if data["VolumeCondition"] == THOST_FTDC_VC_AV:
+                order_type = OrderType.FAK
+            elif data["VolumeCondition"] == THOST_FTDC_VC_CV:
+                order_type = OrderType.FOK
+
+        if data["OrderPriceType"] == THOST_FTDC_OPT_AnyPrice:
+            order_type = OrderType.MARKET
+
         order = OrderData(
             symbol=symbol,
             exchange=exchange,
+            accountid=self.accountid,
             orderid=orderid,
+            type=order_type,
             direction=DIRECTION_CTP2VT[data["Direction"]],
             offset=OFFSET_CTP2VT.get(data["CombOffsetFlag"], Offset.NONE),
             price=data["LimitPrice"],
@@ -708,8 +736,14 @@ class CtpTdApi(TdApi):
         """
         self.gateway.write_log("结算信息确认成功")
 
-        self.reqid += 1
-        self.reqQryInstrument({}, self.reqid)
+        while True:
+            self.reqid += 1
+            n = self.reqQryInstrument({}, self.reqid)
+
+            if not n:
+                break
+            else:
+                sleep(1)
 
     def onRspQryInvestorPosition(self, data: dict, error: dict, reqid: int, last: bool):
         """"""
@@ -723,6 +757,7 @@ class CtpTdApi(TdApi):
             position = self.positions.get(key, None)
             if not position:
                 position = PositionData(
+                    accountid=self.accountid,
                     symbol=data["InstrumentID"],
                     exchange=symbol_exchange_map[data["InstrumentID"]],
                     direction=DIRECTION_CTP2VT[data["PosiDirection"]],
@@ -769,22 +804,30 @@ class CtpTdApi(TdApi):
         """"""
         if "AccountID" not in data:
             return
+        if not self.accountid:
+            self.accountid = data['AccountID']
 
         account = AccountData(
             accountid=data["AccountID"],
-            pre_balance=data['PreBalance'],
-            balance=data["Balance"],
-            frozen=data["FrozenMargin"] + data["FrozenCash"] + data["FrozenCommission"],
+            pre_balance=round(float(data['PreBalance']), 7),
+            balance=round(float(data["Balance"]), 7),
+            frozen=round(data["FrozenMargin"] + data["FrozenCash"] + data["FrozenCommission"], 7),
             gateway_name=self.gateway_name
         )
-        account.available = data["Available"]
-        account.commission = data['Commission']
-        account.margin = data['CurrMargin']
-        account.close_profit = data['CloseProfit']
-        account.holding_profit = data['PositionProfit']
+        account.available = round(float(data["Available"]), 7)
+        account.commission = round(float(data['Commission']), 7)
+        account.margin = round(float(data['CurrMargin']), 7)
+        account.close_profit = round(float(data['CloseProfit']), 7)
+        account.holding_profit = round(float(data['PositionProfit']), 7)
         account.trading_day = str(data['TradingDay'])
-        if '-' not in account.trading_day and len(account.trading_day)== 8:
-            account.trading_day = account.trading_day[0:4] + '-' + account.trading_day[4:6] + '-' + account.trading_day[6:8]
+        if '-' not in account.trading_day and len(account.trading_day) == 8:
+            account.trading_day = '-'.join(
+                [
+                    account.trading_day[0:4],
+                    account.trading_day[4:6],
+                    account.trading_day[6:8]
+                ]
+            )
 
         self.gateway.on_account(account)
 
@@ -810,10 +853,17 @@ class CtpTdApi(TdApi):
 
             # For option only
             if contract.product == Product.OPTION:
-                contract.option_underlying = data["UnderlyingInstrID"],
-                contract.option_type = OPTIONTYPE_CTP2VT.get(data["OptionsType"], None),
-                contract.option_strike = data["StrikePrice"],
-                contract.option_expiry = datetime.strptime(data["ExpireDate"], "%Y%m%d"),
+                # Remove C/P suffix of CZCE option product name
+                if contract.exchange == Exchange.CZCE:
+                    contract.option_portfolio = data["ProductID"][:-1]
+                else:
+                    contract.option_portfolio = data["ProductID"]
+
+                contract.option_underlying = data["UnderlyingInstrID"]
+                contract.option_type = OPTIONTYPE_CTP2VT.get(data["OptionsType"], None)
+                contract.option_strike = data["StrikePrice"]
+                contract.option_index = str(data["StrikePrice"])
+                contract.option_expiry = datetime.strptime(data["ExpireDate"], "%Y%m%d")
 
             self.gateway.on_contract(contract)
 
@@ -832,6 +882,7 @@ class CtpTdApi(TdApi):
                         idx_contract = deepcopy(contract)
                         idx_contract.symbol = '{}99'.format(underlying_symbol)
                         idx_contract.name = u'{}指数'.format(underlying_symbol)
+                        idx_contract.vt_symbol = f'{idx_contract.symbol}.{idx_contract.exchange.value}'
                         self.gateway.on_contract(idx_contract)
 
                         # 获取data/tdx/future_contracts.json中的合约记录
@@ -879,11 +930,22 @@ class CtpTdApi(TdApi):
         order_ref = data["OrderRef"]
         orderid = f"{frontid}_{sessionid}_{order_ref}"
 
+        order_type = OrderType.LIMIT
+        if data["OrderPriceType"] == THOST_FTDC_OPT_LimitPrice and data["TimeCondition"] == THOST_FTDC_TC_IOC:
+            if data["VolumeCondition"] == THOST_FTDC_VC_AV:
+                order_type = OrderType.FAK
+            elif data["VolumeCondition"] == THOST_FTDC_VC_CV:
+                order_type = OrderType.FOK
+
+        if data["OrderPriceType"] == THOST_FTDC_OPT_AnyPrice:
+            order_type = OrderType.MARKET
+
         order = OrderData(
             symbol=symbol,
             exchange=exchange,
             orderid=orderid,
-            type=ORDERTYPE_CTP2VT[data["OrderPriceType"]],
+            sys_orderid=data.get('OrderSysID', ""),
+            type=order_type,
             direction=DIRECTION_CTP2VT[data["Direction"]],
             offset=OFFSET_CTP2VT[data["CombOffsetFlag"]],
             price=data["LimitPrice"],
@@ -909,16 +971,24 @@ class CtpTdApi(TdApi):
 
         orderid = self.sysid_orderid_map[data["OrderSysID"]]
 
+        trade_date = data['TradeDate']
+        if '-' not in trade_date and len(trade_date) == 8:
+            trade_date = trade_date[0:4] + '-' + trade_date[4:6] + '-' + trade_date[6:8]
+        trade_time = data['TradeTime']
+        trade_datetime = datetime.strptime(f'{trade_date} {trade_time}', '%Y-%m-%d %H:%M:%S')
+
         trade = TradeData(
             symbol=symbol,
             exchange=exchange,
             orderid=orderid,
+            sys_orderid=data.get("OrderSysID", ""),
             tradeid=data["TradeID"],
             direction=DIRECTION_CTP2VT[data["Direction"]],
             offset=OFFSET_CTP2VT[data["OffsetFlag"]],
             price=data["Price"],
             volume=data["Volume"],
             time=data["TradeTime"],
+            datetime=trade_datetime,
             gateway_name=self.gateway_name
         )
         self.gateway.on_trade(trade)
@@ -998,11 +1068,11 @@ class CtpTdApi(TdApi):
         """
         Send new order.
         """
-        self.order_ref += 1
-
         if req.offset not in OFFSET_VT2CTP:
             self.gateway.write_log("请选择开平方向")
             return ""
+
+        self.order_ref += 1
 
         ctp_req = {
             "InstrumentID": req.symbol,
@@ -1091,6 +1161,13 @@ class CtpTdApi(TdApi):
             self.exit()
 
 
+def adjust_price(price: float) -> float:
+    """"""
+    if price == MAX_FLOAT:
+        price = 0
+    return price
+
+
 class TdxMdApi():
     """
     通达信数据行情API实现
@@ -1108,7 +1185,7 @@ class TdxMdApi():
 
         self.symbol_exchange_dict = {}  # tdx合约与vn交易所的字典
         self.symbol_market_dict = {}  # tdx合约与tdx市场的字典
-        self.symbol_vn_dict = {}  # tdx合约与vtSymbol的对应
+        self.symbol_vn_dict = {}  # tdx合约与vt_symbol的对应
         self.symbol_tick_dict = {}  # tdx合约与最后一个Tick得字典
 
         self.registered_symbol_set = set()
@@ -1215,7 +1292,8 @@ class TdxMdApi():
                 else:
                     self.gateway.write_log(u'创建tdx连接, IP: {}/{}'.format(self.best_ip['ip'], self.best_ip['port']))
                     self.connection_status = True
-
+                    self.gateway.status.update(
+                        {'tdx_con': True, 'tdx_con_time': datetime.now().strftime('%Y-%m-%d %H:%M%S')})
                     self.thread = Thread(target=self.run)
                     self.thread.start()
 
@@ -1494,7 +1572,7 @@ class SubMdApi():
             self.thread = Thread(target=self.sub.start)
             self.thread.start()
             self.connect_status = True
-
+            self.gateway.status.update({'sub_con': True, 'sub_con_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
         except Exception as ex:
             self.gateway.write_error(u'连接RabbitMQ {} 异常:{}'.format(self.setting, str(ex)))
             self.gateway.write_error(traceback.format_exc())
@@ -1641,22 +1719,22 @@ class TickCombiner(object):
         if (self.last_leg1_tick.ask_price_1 == 0 or self.last_leg1_tick.bid_price_1 == self.last_leg1_tick.limit_up) \
                 and self.last_leg1_tick.ask_volume_1 == 0:
             self.gateway.write_log(
-                u'leg1:{0}涨停{1}，不合成价差Tick'.format(self.last_leg1_tick.vtSymbol, self.last_leg1_tick.bid_price_1))
+                u'leg1:{0}涨停{1}，不合成价差Tick'.format(self.last_leg1_tick.vt_symbol, self.last_leg1_tick.bid_price_1))
             return
         if (self.last_leg1_tick.bid_price_1 == 0 or self.last_leg1_tick.ask_price_1 == self.last_leg1_tick.limit_down) \
                 and self.last_leg1_tick.bid_volume_1 == 0:
             self.gateway.write_log(
-                u'leg1:{0}跌停{1}，不合成价差Tick'.format(self.last_leg1_tick.vtSymbol, self.last_leg1_tick.ask_price_1))
+                u'leg1:{0}跌停{1}，不合成价差Tick'.format(self.last_leg1_tick.vt_symbol, self.last_leg1_tick.ask_price_1))
             return
         if (self.last_leg2_tick.ask_price_1 == 0 or self.last_leg2_tick.bid_price_1 == self.last_leg2_tick.limit_up) \
                 and self.last_leg2_tick.ask_volume_1 == 0:
             self.gateway.write_log(
-                u'leg2:{0}涨停{1}，不合成价差Tick'.format(self.last_leg2_tick.vtSymbol, self.last_leg2_tick.bid_price_1))
+                u'leg2:{0}涨停{1}，不合成价差Tick'.format(self.last_leg2_tick.vt_symbol, self.last_leg2_tick.bid_price_1))
             return
         if (self.last_leg2_tick.bid_price_1 == 0 or self.last_leg2_tick.ask_price_1 == self.last_leg2_tick.limit_down) \
                 and self.last_leg2_tick.bid_volume_1 == 0:
             self.gateway.write_log(
-                u'leg2:{0}跌停{1}，不合成价差Tick'.format(self.last_leg2_tick.vtSymbol, self.last_leg2_tick.ask_price_1))
+                u'leg2:{0}跌停{1}，不合成价差Tick'.format(self.last_leg2_tick.vt_symbol, self.last_leg2_tick.ask_price_1))
             return
 
         if self.trading_day != tick.trading_day:
@@ -1715,38 +1793,58 @@ class TickCombiner(object):
             self.gateway.on_tick(spread_tick)
 
         if self.is_ratio:
-            ratio_tick = TickData(gateway_name=self.gateway_name,
-                                  symbol=self.symbol,
-                                  exchange=Exchange.SPD,
-                                  datetime=tick.datetime)
+            ratio_tick = TickData(
+                gateway_name=self.gateway_name,
+                symbol=self.symbol,
+                exchange=Exchange.SPD,
+                datetime=tick.datetime
+            )
 
             ratio_tick.trading_day = tick.trading_day
             ratio_tick.date = tick.date
             ratio_tick.time = tick.time
 
             # 比率tick
-            ratio_tick.ask_price_1 = round_to(target=self.price_tick,
-                                              value=100 * self.last_leg1_tick.ask_price_1 * self.leg1_ratio / (
-                                                      self.last_leg2_tick.bid_price_1 * self.leg2_ratio))
-            ratio_tick.ask_volume_1 = min(self.last_leg1_tick.ask_volume_1, self.last_leg2_tick.bid_volume_1)
+            ratio_tick.ask_price_1 = 100 * self.last_leg1_tick.ask_price_1 * self.leg1_ratio \
+                                     / (self.last_leg2_tick.bid_price_1 * self.leg2_ratio)  # noqa
+            ratio_tick.ask_price_1 = round_to(
+                target=self.price_tick,
+                value=ratio_tick.ask_price_1
+            )
 
-            ratio_tick.bid_price_1 = round_to(target=self.price_tick,
-                                              value=100 * self.last_leg1_tick.bid_price_1 * self.leg1_ratio / (
-                                                      self.last_leg2_tick.ask_price_1 * self.leg2_ratio))
+            ratio_tick.ask_volume_1 = min(self.last_leg1_tick.ask_volume_1, self.last_leg2_tick.bid_volume_1)
+            ratio_tick.bid_price_1 = 100 * self.last_leg1_tick.bid_price_1 * self.leg1_ratio \
+                                     / (self.last_leg2_tick.ask_price_1 * self.leg2_ratio)  # noqa
+            ratio_tick.bid_price_1 = round_to(
+                target=self.price_tick,
+                value=ratio_tick.bid_price_1
+            )
+
             ratio_tick.bid_volume_1 = min(self.last_leg1_tick.bid_volume_1, self.last_leg2_tick.ask_volume_1)
-            ratio_tick.lastPrice = round_to(target=self.price_tick,
-                                            value=(ratio_tick.ask_price_1 + ratio_tick.bid_price_1) / 2)
+            ratio_tick.last_price = (ratio_tick.ask_price_1 + ratio_tick.bid_price_1) / 2
+            ratio_tick.last_price = round_to(
+                target=self.price_tick,
+                value=ratio_tick.last_price
+            )
 
             # 昨收盘价
             if self.last_leg2_tick.pre_close > 0 and self.last_leg1_tick.pre_close > 0:
-                ratio_tick.pre_close = round_to(target=self.price_tick,
-                                                value=100 * self.last_leg1_tick.pre_close * self.leg1_ratio / (
-                                                        self.last_leg2_tick.pre_close * self.leg2_ratio))
+                ratio_tick.pre_close = 100 * self.last_leg1_tick.pre_close * self.leg1_ratio / (
+                        self.last_leg2_tick.pre_close * self.leg2_ratio)  # noqa
+                ratio_tick.pre_close = round_to(
+                    target=self.price_tick,
+                    value=ratio_tick.pre_close
+                )
+
             # 开盘价
             if self.last_leg2_tick.open_price > 0 and self.last_leg1_tick.open_price > 0:
-                ratio_tick.open_price = round_to(target=self.price_tick,
-                                                 value=100 * self.last_leg1_tick.open_price * self.leg1_ratio / (
-                                                         self.last_leg2_tick.open_price * self.leg2_ratio))
+                ratio_tick.open_price = 100 * self.last_leg1_tick.open_price * self.leg1_ratio / (
+                        self.last_leg2_tick.open_price * self.leg2_ratio)  # noqa
+                ratio_tick.open_price = round_to(
+                    target=self.price_tick,
+                    value=ratio_tick.open_price
+                )
+
             # 最高价
             if self.ratio_high:
                 self.ratio_high = max(self.ratio_high, ratio_tick.ask_price_1)

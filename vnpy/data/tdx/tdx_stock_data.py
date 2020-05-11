@@ -15,11 +15,12 @@ import os
 import pickle
 import bz2
 import traceback
+import pandas as pd
+
 from datetime import datetime, timedelta
 from logging import ERROR
 from pytdx.hq import TdxHq_API
 from pytdx.params import TDXParams
-from pandas import to_datetime
 
 from vnpy.trader.object import BarData
 from vnpy.trader.constant import Exchange
@@ -28,6 +29,7 @@ from vnpy.data.tdx.tdx_common import (
     get_tdx_market_code,
     get_cache_config,
     save_cache_config,
+    get_stock_type,
     TDX_STOCK_CONFIG)
 
 # 每个周期包含多少分钟
@@ -58,6 +60,8 @@ TDX_RQ_STOCK_MARKET_MAP = {
 RQ_TDX_STOCK_MARKET_MAP = {v: k for k, v in TDX_RQ_STOCK_MARKET_MAP.items()}
 
 
+# 本地缓存文件
+
 class TdxStockData(object):
 
     def __init__(self, strategy=None):
@@ -71,7 +75,6 @@ class TdxStockData(object):
 
         self.strategy = strategy
         self.best_ip = None
-        self.symbol_exchange_dict = {}  # tdx合约与vn交易所的字典
         self.symbol_market_dict = {}  # tdx合约与tdx市场的字典
 
         self.config = get_cache_config(TDX_STOCK_CONFIG)
@@ -139,6 +142,12 @@ class TdxStockData(object):
                 continue
             for security in security_list:
                 tdx_symbol = security.get('code', None)
+                exchange = Exchange.SZSE.value if market_id == 0 else Exchange.SSE.value
+                stock_type = get_stock_type(tdx_symbol)
+                security.update({'market_id': market_id})
+                security.update({'stock_type': stock_type})
+                security.update({'exchange': exchange})
+
                 if tdx_symbol:
                     self.symbol_dict.update({f'{tdx_symbol}_{market_id}': security})
 
@@ -170,13 +179,21 @@ class TdxStockData(object):
 
         return results
 
+    def get_name(self, code, market_id):
+        symbol_info = self.symbol_dict.get(f'{code}_{market_id}')
+        if symbol_info:
+            return symbol_info.get('name', code)
+
+        return code
+
     # ----------------------------------------------------------------------
     def get_bars(self,
                  symbol: str,
                  period: str,
                  callback=None,
                  bar_freq: int = 1,
-                 start_dt: datetime = None):
+                 start_dt: datetime = None,
+                 return_bar: bool = True):
         """
         返回k线数据
         symbol：股票 000001.XG
@@ -192,14 +209,13 @@ class TdxStockData(object):
         if '.' in symbol:
             tdx_code, market_str = symbol.split('.')
             # 1, 上交所 ， 0， 深交所
-            market_code = 1 if market_str.upper() in ['XSHG', Exchange.SSE.value] else 0
-            self.symbol_exchange_dict.update({tdx_code: symbol})  # tdx合约与vn交易所的字典
-            self.symbol_market_dict.update({tdx_code: market_code})  # tdx合约与tdx市场的字典
+            market_id = 1 if market_str.upper() in ['XSHG', Exchange.SSE.value] else 0
+            self.symbol_market_dict.update({tdx_code: market_id})  # tdx合约与tdx市场的字典
         else:
-            market_code = get_tdx_market_code(symbol)
+            market_id = get_tdx_market_code(symbol)
             tdx_code = symbol
-            self.symbol_exchange_dict.update({symbol: symbol})  # tdx合约与vn交易所的字典
-            self.symbol_market_dict.update({symbol: market_code})  # tdx合约与tdx市场的字典
+            self.symbol_market_dict.update({symbol: market_id})  # tdx合约与tdx市场的字典
+        name = self.get_name(tdx_code, market_id)
 
         # period => tdx_period
         if period not in PERIOD_MAPPING.keys():
@@ -220,8 +236,8 @@ class TdxStockData(object):
         if qry_start_date > qry_end_date:
             qry_start_date = qry_end_date
 
-        self.write_log('{}开始下载tdx股票:{} {}数据, {} to {}.'
-                       .format(datetime.now(), tdx_code, tdx_period, qry_start_date, qry_end_date))
+        self.write_log('{}开始下载tdx股票: {},代码:{} {}数据, {} to {}.'
+                       .format(datetime.now(), name, tdx_code, tdx_period, qry_start_date, qry_end_date))
 
         try:
             _start_date = qry_end_date
@@ -230,7 +246,7 @@ class TdxStockData(object):
             while _start_date > qry_start_date:
                 _res = self.api.get_security_bars(
                     category=PERIOD_MAPPING[period],
-                    market=market_code,
+                    market=market_id,
                     code=tdx_code,
                     start=_pos,
                     count=QSIZE)
@@ -250,7 +266,7 @@ class TdxStockData(object):
 
             current_datetime = datetime.now()
             data = self.api.to_df(_bars)
-            data = data.assign(datetime=to_datetime(data['datetime']))
+            data = data.assign(datetime=pd.to_datetime(data['datetime']))
             data = data.assign(ticker=symbol)
             data['symbol'] = symbol
             data = data.drop(
@@ -273,43 +289,48 @@ class TdxStockData(object):
             data['time'] = data['datetime'].apply(lambda x: (x.strftime('%H:%M:%S')))
             data = data.set_index('datetime', drop=False)
 
-            for index, row in data.iterrows():
-                add_bar = BarData()
-                try:
-                    add_bar.symbol = symbol
-                    add_bar.datetime = index
-                    add_bar.date = row['date']
-                    add_bar.time = row['time']
-                    add_bar.trading_date = row['trading_date']
-                    add_bar.open_price = float(row['open'])
-                    add_bar.high_price = float(row['high'])
-                    add_bar.low_price = float(row['low'])
-                    add_bar.close_price = float(row['close'])
-                    add_bar.volume = float(row['volume'])
-                except Exception as ex:
-                    self.write_error('error when convert bar:{},ex:{},t:{}'
-                                     .format(row, str(ex), traceback.format_exc()))
-                    # print('error when convert bar:{},ex:{},t:{}'.format(row, str(ex), traceback.format_exc()))
-                    return False
+            if return_bar:
+                self.write_log('dataframe => [BarData]')
+                for index, row in data.iterrows():
+                    add_bar = BarData()
+                    try:
+                        add_bar.symbol = symbol
+                        add_bar.datetime = index
+                        add_bar.date = row['date']
+                        add_bar.time = row['time']
+                        add_bar.trading_date = row['trading_date']
+                        add_bar.open_price = float(row['open'])
+                        add_bar.high_price = float(row['high'])
+                        add_bar.low_price = float(row['low'])
+                        add_bar.close_price = float(row['close'])
+                        add_bar.volume = float(row['volume'])
+                    except Exception as ex:
+                        self.write_error('error when convert bar:{},ex:{},t:{}'
+                                         .format(row, str(ex), traceback.format_exc()))
+                        # print('error when convert bar:{},ex:{},t:{}'.format(row, str(ex), traceback.format_exc()))
+                        return False, ret_bars
 
-                if start_dt is not None and index < start_dt:
-                    continue
-                ret_bars.append(add_bar)
+                    if start_dt is not None and index < start_dt:
+                        continue
+                    ret_bars.append(add_bar)
 
-                if callback is not None:
-                    freq = bar_freq
-                    bar_is_completed = True
-                    if period != '1min' and index == data['datetime'][-1]:
-                        # 最后一个bar，可能是不完整的，强制修改
-                        # - 5min修改后freq基本正确
-                        # - 1day在VNPY合成时不关心已经收到多少Bar, 所以影响也不大
-                        # - 但其它分钟周期因为不好精确到每个品种, 修改后的freq可能有错
-                        if index > current_datetime:
-                            bar_is_completed = False
-                            # 根据秒数算的话，要+1，例如13:31,freq=31，第31根bar
-                            freq = NUM_MINUTE_MAPPING[period] - int((index - current_datetime).total_seconds() / 60)
-                    callback(add_bar, bar_is_completed, freq)
+                    if callback is not None:
+                        freq = bar_freq
+                        bar_is_completed = True
+                        if period != '1min' and index == data['datetime'][-1]:
+                            # 最后一个bar，可能是不完整的，强制修改
+                            # - 5min修改后freq基本正确
+                            # - 1day在VNPY合成时不关心已经收到多少Bar, 所以影响也不大
+                            # - 但其它分钟周期因为不好精确到每个品种, 修改后的freq可能有错
+                            if index > current_datetime:
+                                bar_is_completed = False
+                                # 根据秒数算的话，要+1，例如13:31,freq=31，第31根bar
+                                freq = NUM_MINUTE_MAPPING[period] - int((index - current_datetime).total_seconds() / 60)
+                        callback(add_bar, bar_is_completed, freq)
 
+            else:
+                self.write_log('dataframe => [ dict ]')
+                ret_bars = list(data.T.to_dict().values())
             return True, ret_bars
         except Exception as ex:
             self.write_error('exception in get:{},{},{}'.format(tdx_code, str(ex), traceback.format_exc()))
@@ -392,13 +413,14 @@ class TdxStockData(object):
         if '.' in symbol:
             tdx_code, market_str = symbol.split('.')
             market_code = 1 if market_str.upper() in ['XSHG', Exchange.SSE.value] else 0
-            self.symbol_exchange_dict.update({tdx_code: symbol})  # tdx合约与vn交易所的字典
             self.symbol_market_dict.update({tdx_code: market_code})  # tdx合约与tdx市场的字典
         else:
             market_code = get_tdx_market_code(symbol)
             tdx_code = symbol
-            self.symbol_exchange_dict.update({symbol: symbol})  # tdx合约与vn交易所的字典
             self.symbol_market_dict.update({symbol: market_code})  # tdx合约与tdx市场的字典
+
+        symbol_config = self.symbol_dict.get(f'{tdx_code}_{market_code}', {})
+        decimal_point = symbol_config.get('decimal_point', 2)
 
         q_size = QSIZE * 5
         # 每秒 2个， 10小时
@@ -462,6 +484,10 @@ class TdxStockData(object):
                         last_dt = last_dt + timedelta(seconds=1)
                 d.update({'datetime': last_dt})
                 d.update({'volume': d.pop('vol', 0)})
+                if decimal_point > 2:
+                    price = round(d.get('price') / (10 ** (decimal_point - 2)), decimal_point)
+                    d.update({'price': price})
+
                 d.update({'trading_date': last_dt.strftime('%Y-%m-%d')})
 
             _datas = sorted(_datas, key=lambda s: s['datetime'])
@@ -476,3 +502,63 @@ class TdxStockData(object):
             self.write_error(
                 'exception in get_transaction_data:{},{},{}'.format(symbol, str(ex), traceback.format_exc()))
             return False, ret_datas
+
+    def get_stock_list(self, types=["stock_cn", "etf_cn", "bond_cn", "cb_cn"]):
+        """股票所有的code&name列表"""
+        if self.api is None:
+            self.connect()
+
+        data = pd.concat(
+            [pd.concat([self.api.to_df(self.api.get_security_list(j, i * 1000)).assign(sse='sz' if j == 0 else 'sh').set_index(
+                ['code', 'sse'], drop=False) for i in range(int(self.api.get_security_count(j) / 1000) + 1)], axis=0) for j
+                in range(2)], axis=0)
+        sz = data.query('sse=="sz"')
+        sh = data.query('sse=="sh"')
+        sz = sz.assign(sec=sz.code.apply(get_stock_type))
+        sh = sh.assign(sec=sh.code.apply(get_stock_type))
+
+        temp_df = pd.concat([sz, sh]).query('sec in ["{}"]'.format(types)).sort_index().assign(
+            name=data['name'].apply(lambda x: str(x)[0:6]))
+
+        hq_codelist = []
+
+        for i in range(0, len(temp_df)):
+            row = temp_df.iloc[i]
+            hq_codelist.append(
+                {
+                    "code": row['code'],
+                    "exchange":  Exchange.SSE.value if row['sse'] == 'sh' else Exchange.SZSE.value,
+                    "market_id": 1 if row['sse'] == 'sh' else 0,
+                    "name": row['name']
+
+                }
+            )
+
+        return hq_codelist
+
+    def get_security_quotes(self, all_stock, code=None):
+        """
+        支持三种形式的参数
+        get_security_quotes(market, code )
+        get_security_quotes((market, code))
+        get_security_quotes([(market1, code1), (market2, code2)] )
+        :param all_stock （market, code) 的数组
+        :param code{optional} code to query
+        :return:
+        """
+        if self.api is None:
+            self.connect()
+
+        return self.api.get_security_quotes(all_stock, code)
+
+    def get_stock_quotes_by_type(self, stock_type):
+        """根据股票代码类型，获取其最新行情"""
+        stock_list = [(stock.get('market_id'), stock.get('code')) for stock in self.symbol_dict.values() if stock.get('stock_type') == stock_type]
+
+        num_per_count = 60
+        results = []
+        for i in range(0, len(stock_list)+1, num_per_count):
+            cur_results = self.get_security_quotes(stock_list[i:i+num_per_count])
+            results.extend(cur_results)
+
+        return results

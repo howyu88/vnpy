@@ -1,14 +1,28 @@
 from pathlib import Path
 
 from vnpy.trader.app import BaseApp
-from vnpy.trader.constant import Direction
-from vnpy.trader.object import TickData, BarData, TradeData, OrderData
-from vnpy.trader.utility import BarGenerator, ArrayManager
-
 from .base import APP_NAME, StopOrder
+
 from .engine import CtaEngine
 
-from .template import CtaTemplate, CtaSignal, TargetPosTemplate
+from .template import (
+    Direction,
+    Offset,
+    Status,
+    Color,
+    TickData,
+    BarData,
+    TradeData,
+    OrderData,
+    CtaTemplate,
+    CtaSignal,
+    TargetPosTemplate,
+    CtaProTemplate,
+    CtaProFutureTemplate)  # noqa
+from vnpy.trader.utility import BarGenerator, ArrayManager  # noqa
+
+from .template_spread import CtaSpreadTemplate
+
 
 class CtaStrategyProApp(BaseApp):
     """"""

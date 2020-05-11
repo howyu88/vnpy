@@ -131,6 +131,16 @@ class TdxFutureData(object):
                 # 选取最佳服务器
                 if is_reconnect or len(self.best_ip) == 0:
                     self.best_ip = get_cache_json(TDX_FUTURE_CONFIG)
+                    last_datetime_str = self.best_ip.get('datetime', None)
+                    if last_datetime_str:
+                        try:
+                            last_datetime = datetime.strptime(last_datetime_str, '%Y-%m-%d %H:%M:%S')
+                            if (datetime.now() - last_datetime).total_seconds() > 60 * 60 * 2:
+                                self.best_ip = {}
+                        except Exception as ex: # noqa
+                            self.best_ip = {}
+                    else:
+                        self.best_ip = {}
 
                 if len(self.best_ip) == 0:
                     self.best_ip = self.select_best_ip()
@@ -192,6 +202,7 @@ class TdxFutureData(object):
 
         self.write_log(u'选取 {}:{}'.format(best_future_ip['ip'], best_future_ip['port']))
         # print(u'选取 {}:{}'.format(best_future_ip['ip'], best_future_ip['port']))
+        best_future_ip.update({'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
         save_cache_json(best_future_ip, TDX_FUTURE_CONFIG)
         return best_future_ip
 
@@ -230,6 +241,7 @@ class TdxFutureData(object):
                 self.symbol_exchange_dict.update({tdx_symbol: Tdx_Vn_Exchange_Map.get(str(tdx_market_id))})
                 self.symbol_market_dict.update({tdx_symbol: tdx_market_id})
 
+
     # ----------------------------------------------------------------------
     def get_bars(self,
                  symbol: str,
@@ -251,6 +263,8 @@ class TdxFutureData(object):
         """
 
         ret_bars = []
+        if '.' in symbol:
+            symbol = symbol.split('.')[0]
         tdx_symbol = symbol.upper().replace('_', '')
         tdx_symbol = tdx_symbol.replace('99', 'L9')
         underlying_symbol = get_underlying_symbol(symbol).upper()
@@ -279,7 +293,7 @@ class TdxFutureData(object):
             end_date = end_dt
         if qry_start_date > end_date:
             qry_start_date = end_date
-        self.write_log('{}开始下载tdx:{} {}数据, {} to {}.'
+        self.write_log('{}开始下载tdx:{},周期类型:{}数据, {} to {}.'
                        .format(datetime.now(), tdx_symbol, period, qry_start_date, end_date))
         # print('{}开始下载tdx:{} {}数据, {} to {}.'.format(datetime.now(), tdx_symbol, tdx_period, last_date, end_date))
 
