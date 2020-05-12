@@ -1290,7 +1290,7 @@ class CtaProFutureTemplate(CtaProTemplate):
 
 
         order_price = old_order['price']
-        order_type = old_order.get('order_type', OrderType.LIMIT)
+        order_type = old_order.get('order_type', OrderType.LI MIT)
         order_retry = old_order.get('retry', 0)
         grid = old_order.get('grid', None)
         if grid:
