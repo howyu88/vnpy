@@ -8,11 +8,11 @@ from copy import copy
 VNPY_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', ))
 sys.path.append(VNPY_ROOT)
 print(f'append {VNPY_ROOT} into sys.path')
-os.environ["VNPY_TESTING"] = "1"
 
 from datetime import datetime
-from vnpy.app.cta_strategy_pro.spread_testing import single_test
+from vnpy.app.cta_strategy_pro.portfolio_testing import single_test
 from vnpy.trader.utility import load_json
+
 
 def get_symbol_configs(json_file_name, bar_file_format=''):
     """
@@ -39,15 +39,15 @@ def get_symbol_configs(json_file_name, bar_file_format=''):
 # 回测引擎参数
 test_setting = {}
 
-test_setting['name'] = 'spread_test_{}'.format(datetime.now().strftime('%m%d_%H%M'))
+test_setting['name'] = 'renko_reverse_test_{}'.format(datetime.now().strftime('%m%d_%H%M'))
 
 test_setting['mode'] = 'tick'
-test_setting['tick_path'] = os.path.abspath(os.path.join(VNPY_ROOT, 'tick_data'))
+test_setting['tick_path'] = os.path.abspath(os.path.join(VNPY_ROOT, 'tick_data', 'tdx', 'future'))
 
 # 测试时间段, 从开始日期计算，过了init_days天，才全部激活交易
-test_setting['start_date'] = '20180301'
-test_setting['init_days'] = 5
-test_setting['end_date'] = '20180401'
+test_setting['start_date'] = '20180101'
+test_setting['init_days'] = 1
+test_setting['end_date'] = '20190101'
 
 # 测试资金相关, 资金最大仓位， 期初资金
 test_setting['percent_limit'] = 20
@@ -85,25 +85,27 @@ execute.apply_async(kwargs={'func': 'vnpy.app.cta_strategy_pro.portfolio_testing
 # 创建回测任务
 count = 0
 
-symbol = 'rb1805-1-rb1810-1-CJ'
+symbol = 'J99'
+symbol_info = symbol_datas.get(symbol)
+underlying_symbol = symbol_info.get('underlying_symbol')
 
+# 更新测试名称
+test_setting.update({'name': test_setting['name'] + f"_{symbol}"})
 #
 strategy_setting = {
-    f"SPD_RB0510": {
-        "class_name": "Strategy_SpreadGrid_v1",
-        "vt_symbol": f"{symbol}.SPD",
+    f"renko_reverse_v1_{symbol}": {
+        "class_name": "Strategy_Renko_Reverse",
+        "vt_symbol": f"{symbol}",
         "auto_init": True,
         "setting": {
             "backtesting": True,
-            "class_name": "Strategy_SpreadGrid_v1",
-            "act_vt_symbol": "rb1805.SHFE",
-            "pas_vt_symbol": "rb1810.SHFE",
-            "max_invest_pos": 2,
-
+            "class_name": "Strategy_Renko_Reverse",
+            "max_invest_percent": 10,
+            "renko_height": "K3"
         }
     }
 }
 
-single_t est(test_setting=test_setting, strategy_setting=strategy_setting)
+single_test(test_setting=test_setting, strategy_setting=strategy_setting)
 
 

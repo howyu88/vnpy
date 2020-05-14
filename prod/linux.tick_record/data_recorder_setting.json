@@ -1,0 +1,38 @@
+{
+    "tick": {
+        "rb2005.SHFE": {
+            "symbol": "rb2005",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        },
+        "fu2005.SHFE": {
+            "symbol": "fu2005",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        },
+        "ru2005.SHFE": {
+            "symbol": "ru2005",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        }
+        ,
+        "ni2003.SHFE": {
+            "symbol": "ni2003",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        }
+         ,
+        "cu2002.SHFE": {
+            "symbol": "cu2002",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        }
+         ,
+        "ag2002.SHFE": {
+            "symbol": "ag2002",
+            "exchange": "SHFE",
+            "gateway_name": "CTP"
+        }
+    },
+    "tick_folder": "/home/trade/tick_data"
+}

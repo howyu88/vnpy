@@ -1,0 +1,76 @@
+{
+		"CTP_GM": {
+			"req_address": "tcp://127.0.0.1:22314",
+			"pub_address": "tcp://127.0.0.1:22316",
+			"SubscribeTopic":""},
+		"CTP_YH03": {
+			"req_address": "tcp://127.0.0.1:22324",
+			"pub_address": "tcp://127.0.0.1:22326",
+			"SubscribeTopic":""},
+		"CTP_RH02": {
+			"req_address": "tcp://127.0.0.1:22334",
+			"pub_address": "tcp://127.0.0.1:22336",
+			"SubscribeTopic":""},
+		"CTP_CJ": {
+			"req_address": "tcp://127.0.0.1:22344",
+			"pub_address": "tcp://127.0.0.1:22346",
+			"SubscribeTopic":""}
+		,
+		"CTP_JT": {
+			"req_address": "tcp://127.0.0.1:22354",
+			"pub_address": "tcp://127.0.0.1:22356",
+			"SubscribeTopic":""}
+		,
+		"CTP_RH01": {
+			"req_address": "tcp://127.0.0.1:22364",
+			"pub_address": "tcp://127.0.0.1:22366",
+			"SubscribeTopic":""},
+		"CTP": {
+			"req_address": "tcp://127.0.0.1:10001",
+			"pub_address": "tcp://127.0.0.1:10002",
+			"SubscribeTopic":""}
+		,
+		"CTP_Huafu001": {
+			"req_address": "tcp://127.0.0.1:11001",
+			"pub_address": "tcp://127.0.0.1:11002",
+			"SubscribeTopic":""}
+		,
+		"CTP_Huafu002": {
+			"req_address": "tcp://127.0.0.1:12003",
+			"pub_address": "tcp://127.0.0.1:12004",
+			"SubscribeTopic":""}
+		,
+		"CTP_Huafu003": {
+			"req_address": "tcp://127.0.0.1:13003",
+			"pub_address": "tcp://127.0.0.1:13004",
+			"SubscribeTopic":""},
+		"CTP_Huafu004": {
+			"req_address": "tcp://127.0.0.1:14003",
+			"pub_address": "tcp://127.0.0.1:14004",
+			"SubscribeTopic":""},
+		"CTP_Huafu005": {
+			"req_address": "tcp://127.0.0.1:15003",
+			"pub_address": "tcp://127.0.0.1:15004",
+			"SubscribeTopic":""},
+		"CTP_Huafu006": {
+			"req_address": "tcp://127.0.0.1:16003",
+			"pub_address": "tcp://127.0.0.1:16004",
+			"SubscribeTopic":""},
+		"CTP_Huafu007": {
+			"req_address": "tcp://127.0.0.1:17003",
+			"pub_address": "tcp://127.0.0.1:17004",
+			"SubscribeTopic":""},
+		"CTP_YH01": {
+			"req_address": "tcp://127.0.0.1:22304",
+			"pub_address": "tcp://127.0.0.1:22306",
+			"SubscribeTopic":""},
+		"STOCK02": {
+			"req_address": "tcp://127.0.0.1:22001",
+			"pub_address": "tcp://127.0.0.1:22002",
+			"SubscribeTopic":""},
+
+        "Binance01": {
+			"req_address": "tcp://127.0.0.1:40001",
+            "pub_address": "tcp://127.0.0.1:40002",
+			"SubscribeTopic":""}
+	}
