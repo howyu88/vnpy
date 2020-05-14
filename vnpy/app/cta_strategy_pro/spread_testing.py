@@ -44,7 +44,7 @@ VN_EXCHANGE_TICKFOLDER_MAP = {
 }
 
 
-class SpreadTestingEngine(BackTestingEngine):
+class  SpreadTestingEngine(BackTestingEngine):
     """
     CTA套利组合回测引擎, 使用回测引擎作为父类
     函数接口和策略引擎保持一样，
