@@ -1,4 +1,4 @@
-# encoding: utf-8
+ # encoding: utf-8
 
 # 该文件，为无界面调度文件，以vtClient为基准，
 # 通过vt_setting访问远程RPC server端口，进行指令调度
