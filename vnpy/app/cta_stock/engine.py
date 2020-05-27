@@ -59,7 +59,8 @@ from vnpy.trader.utility import (
     TRADER_DIR,
     get_folder_path,
     get_underlying_symbol,
-    append_data)
+    append_data,
+    import_module_by_str)
 
 from vnpy.trader.util_logger import setup_logger, logging
 from vnpy.trader.util_wechat import send_wx_msg
@@ -210,7 +211,7 @@ class CtaEngine(BaseEngine):
                 all_trading = False
 
         dt = datetime.now()
-
+        # 每分钟执行的逻辑
         if self.last_minute != dt.minute:
             self.last_minute = dt.minute
 
@@ -218,6 +219,7 @@ class CtaEngine(BaseEngine):
                 # 主动获取所有策略得持仓信息
                 all_strategy_pos = self.get_all_strategy_pos()
 
+                # 每5分钟检查一次
                 if dt.minute % 5 == 0:
                     # 比对仓位，使用上述获取得持仓信息，不用重复获取
                     self.compare_pos(strategy_pos_list=copy(all_strategy_pos))
@@ -1148,10 +1150,22 @@ class CtaEngine(BaseEngine):
 
         module_name = self.class_module_map[class_name]
         # 重新load class module
-        if not self.load_strategy_class_from_module(module_name):
-            err_msg = f'不能加载模块:{module_name}'
-            self.write_error(err_msg)
-            return False, err_msg
+        #if not self.load_strategy_class_from_module(module_name):
+        #    err_msg = f'不能加载模块:{module_name}'
+        #    self.write_error(err_msg)
+        #    return False, err_msg
+        if module_name:
+            new_class_name = module_name + '.' + class_name
+            self.write_log(u'转换策略为全路径:{}'.format(new_class_name))
+
+            strategy_class = import_module_by_str(new_class_name)
+            if strategy_class is None:
+                err_msg = u'加载策略模块失败:{}'.format(class_name)
+                self.write_error(err_msg)
+                return False, err_msg
+
+            self.write_log(f'重新加载模块成功，使用新模块:{new_class_name}')
+            self.classes[class_name] = strategy_class
 
         # 停止当前策略实例的运行，撤单
         self.stop_strategy(strategy_name)
@@ -1206,6 +1220,25 @@ class CtaEngine(BaseEngine):
         except Exception as ex:
             self.write_error(u'保存策略{}数据异常:'.format(strategy_name, str(ex)))
             self.write_error(traceback.format_exc())
+
+    def get_strategy_snapshot(self, strategy_name):
+        """实时获取策略的K线切片（比较耗性能）"""
+        strategy = self.strategies.get(strategy_name, None)
+        if strategy is None:
+            return None
+
+        try:
+            # 5.保存策略切片
+            snapshot = strategy.get_klines_snapshot()
+            if not snapshot:
+                self.write_log(f'{strategy_name}返回得K线切片数据为空')
+                return None
+            return snapshot
+
+        except Exception as ex:
+            self.write_error(u'获取策略{}切片数据异常:'.format(strategy_name, str(ex)))
+            self.write_error(traceback.format_exc())
+            return None
 
     def save_strategy_snapshot(self, select_name: str = 'ALL'):
         """
@@ -1457,7 +1490,24 @@ class CtaEngine(BaseEngine):
         d.update(strategy.get_parameters())
         return d
 
-    def compare_pos(self,strategy_pos_list=[]):
+    def get_none_strategy_pos_list(self):
+        """获取非策略持有的仓位"""
+        # 格式 [  'strategy_name':'account', 'pos': [{'vt_symbol': '', 'direction': 'xxx', 'volume':xxx }] } ]
+        none_strategy_pos_file = os.path.abspath(os.path.join(os.getcwd(), 'data', 'none_strategy_pos.json'))
+        if not os.path.exists(none_strategy_pos_file):
+            return []
+        try:
+            with open(none_strategy_pos_file, encoding='utf8') as f:
+                pos_list = json.load(f)
+                if isinstance(pos_list, list):
+                    return pos_list
+
+            return []
+        except Exception as ex:
+            self.write_error(u'未能读取或解释{}'.format(none_strategy_pos_file))
+            return []
+
+    def compare_pos(self, strategy_pos_list=[]):
         """
         对比账号&策略的持仓,不同的话则发出微信提醒
         :return:
@@ -1473,13 +1523,15 @@ class CtaEngine(BaseEngine):
             strategy_pos_list = self.get_all_strategy_pos()
         self.write_log(u'策略持仓清单:{}'.format(strategy_pos_list))
 
+        none_strategy_pos = self.get_none_strategy_pos_list()
+        if len(none_strategy_pos) > 0:
+            strategy_pos_list.extend(none_strategy_pos)
+
         # 需要进行对比得合约集合（来自策略持仓/账号持仓）
         vt_symbols = set()
 
         # 账号的持仓处理 => account_pos
-
         compare_pos = dict()  # vt_symbol: {'账号多单': xx,'策略多单':[]}
-
         for position in list(self.positions.values()):
             # gateway_name.symbol.exchange => symbol.exchange
             vt_symbol = position.vt_symbol

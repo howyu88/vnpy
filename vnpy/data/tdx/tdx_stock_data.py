@@ -120,7 +120,14 @@ class TdxStockData(object):
                     self.config.update({'best_ip': self.best_ip})
                     save_cache_config(self.config, TDX_STOCK_CONFIG)
 
-                self.api.connect(self.best_ip.get('ip'), self.best_ip.get('port'))
+                # 如果配置proxy5，使用vnpy项目下的pytdx
+                if len(self.proxy_ip) > 0 and self.proxy_port > 0:
+                    self.api.connect(ip=self.best_ip['ip'], port=self.best_ip['port'],
+                                     proxy_ip=self.proxy_ip, proxy_port=self.proxy_port)
+                else:
+                    # 使用pip install pytdx
+                    self.api.connect(ip=self.best_ip['ip'], port=self.best_ip['port'])
+
                 self.write_log(f'创建tdx连接, : {self.best_ip}')
                 self.connection_status = True
 
@@ -366,16 +373,16 @@ class TdxStockData(object):
                    cache_date: str):
         """加载缓存数据"""
         if not os.path.exists(cache_folder):
-            self.write_error('缓存目录:{}不存在,不能读取'.format(cache_folder))
+            #self.write_error('缓存目录:{}不存在,不能读取'.format(cache_folder))
             return None
         cache_folder_year_month = os.path.join(cache_folder, cache_date[:6])
         if not os.path.exists(cache_folder_year_month):
-            self.write_error('缓存目录:{}不存在,不能读取'.format(cache_folder_year_month))
+            #self.write_error('缓存目录:{}不存在,不能读取'.format(cache_folder_year_month))
             return None
 
         cache_file = os.path.join(cache_folder_year_month, '{}_{}.pkb2'.format(cache_symbol, cache_date))
         if not os.path.isfile(cache_file):
-            self.write_error('缓存文件:{}不存在,不能读取'.format(cache_file))
+            #self.write_error('缓存文件:{}不存在,不能读取'.format(cache_file))
             return None
         with bz2.BZ2File(cache_file, 'rb') as f:
             data = pickle.load(f)

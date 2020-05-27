@@ -628,12 +628,13 @@ class CtaProTemplate(CtaTemplate):
         if self.idx_symbol is None:
             symbol, exchange = extract_vt_symbol(self.vt_symbol)
             self.idx_symbol = get_underlying_symbol(symbol).upper() + '99.' + exchange.value
+        self.cta_engine.subscribe_symbol(strategy_name=self.strategy_name, vt_symbol=self.idx_symbol)
+
         if self.vt_symbol != self.idx_symbol:
             self.write_log(f'指数合约:{self.idx_symbol}, 主力合约:{self.vt_symbol}')
         self.price_tick = self.cta_engine.get_price_tick(self.vt_symbol)
         self.symbol_size = self.cta_engine.get_size(self.vt_symbol)
         self.margin_rate = self.cta_engine.get_margin_rate(self.vt_symbol)
-
 
     def sync_data(self):
         """同步更新数据"""
@@ -1109,7 +1110,6 @@ class CtaProFutureTemplate(CtaProTemplate):
         self.trading = True
         self.put_event()
 
-    # ----------------------------------------------------------------------
     def on_stop(self):
         """停止策略（必须由用户继承实现）"""
         self.active_orders.clear()
@@ -1287,7 +1287,6 @@ class CtaProFutureTemplate(CtaProTemplate):
         old_order['traded'] = order.traded
         order_vt_symbol = copy(old_order['vt_symbol'])
         order_volume = old_order['volume'] - old_order['traded']
-
 
         order_price = old_order['price']
         order_type = old_order.get('order_type', OrderType.LIMIT)
@@ -1468,7 +1467,6 @@ class CtaProFutureTemplate(CtaProTemplate):
             self.write_log(u'活动订单移除:{}'.format(order.vt_orderid))
             self.active_orders.pop(order.vt_orderid, None)
             return
-
 
         if order_retry > 20:
             msg = u'{} 平仓撤单 {}/{}手， 重试平仓次数{}>20' \

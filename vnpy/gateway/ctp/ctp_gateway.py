@@ -497,9 +497,11 @@ class CtpMdApi(MdApi):
         exchange = symbol_exchange_map.get(symbol, "")
         if not exchange:
             return
-
-        timestamp = f"{data['ActionDay']} {data['UpdateTime']}.{int(data['UpdateMillisec'] / 100)}"
-        dt = datetime.strptime(timestamp, "%Y%m%d %H:%M:%S.%f")
+        # 取当前时间
+        dt = datetime.now()
+        s_date = dt.strftime('%Y-%m-%d')
+        timestamp = f"{s_date} {data['UpdateTime']}.{int(data['UpdateMillisec'] / 100)}"
+        dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
 
         # 不处理开盘前的tick数据
         if dt.hour in [8, 20] and dt.minute < 59:
@@ -511,7 +513,7 @@ class CtpMdApi(MdApi):
             symbol=symbol,
             exchange=exchange,
             datetime=dt,
-            date=dt.strftime('%Y-%m-%d'),
+            date=s_date,
             time=dt.strftime('%H:%M:%S.%f'),
             trading_day=get_trading_date(dt),
             name=symbol_name_map[symbol],
@@ -640,7 +642,7 @@ class CtpTdApi(TdApi):
         self.sysid_orderid_map = {}
         self.future_contract_changed = False
 
-        self.accountid = ""
+        self.accountid = self.userid
 
     def onFrontConnected(self):
         """"""
@@ -804,7 +806,7 @@ class CtpTdApi(TdApi):
         """"""
         if "AccountID" not in data:
             return
-        if not self.accountid:
+        if len(self.accountid)== 0:
             self.accountid = data['AccountID']
 
         account = AccountData(
@@ -941,10 +943,11 @@ class CtpTdApi(TdApi):
             order_type = OrderType.MARKET
 
         order = OrderData(
+            accountid=self.accountid,
             symbol=symbol,
             exchange=exchange,
             orderid=orderid,
-            sys_orderid=data.get('OrderSysID', ""),
+            sys_orderid=data.get('OrderSysID', orderid),
             type=order_type,
             direction=DIRECTION_CTP2VT[data["Direction"]],
             offset=OFFSET_CTP2VT[data["CombOffsetFlag"]],
@@ -976,13 +979,14 @@ class CtpTdApi(TdApi):
             trade_date = trade_date[0:4] + '-' + trade_date[4:6] + '-' + trade_date[6:8]
         trade_time = data['TradeTime']
         trade_datetime = datetime.strptime(f'{trade_date} {trade_time}', '%Y-%m-%d %H:%M:%S')
-
+        tradeid = data["TradeID"]
         trade = TradeData(
+            accountid=self.accountid,
             symbol=symbol,
             exchange=exchange,
             orderid=orderid,
-            sys_orderid=data.get("OrderSysID", ""),
-            tradeid=data["TradeID"],
+            sys_orderid=data.get("OrderSysID", orderid),
+            tradeid=tradeid.replace(' ',''),
             direction=DIRECTION_CTP2VT[data["Direction"]],
             offset=OFFSET_CTP2VT[data["OffsetFlag"]],
             price=data["Price"],
@@ -1057,7 +1061,7 @@ class CtpTdApi(TdApi):
             "BrokerID": self.brokerid,
             "AppID": self.appid
         }
-
+        self.accountid = copy(self.userid)
         if self.product_info:
             req["UserProductInfo"] = self.product_info
 
@@ -1109,6 +1113,8 @@ class CtpTdApi(TdApi):
 
         orderid = f"{self.frontid}_{self.sessionid}_{self.order_ref}"
         order = req.create_order_data(orderid, self.gateway_name)
+        order.accountid = self.accountid
+        order.vt_accountid = f"{self.gateway_name}.{self.accountid}"
         self.gateway.on_order(order)
 
         return order.vt_orderid
@@ -1583,6 +1589,10 @@ class SubMdApi():
         try:
             str_tick = body.decode('utf-8')
             d = json.loads(str_tick)
+            d.pop('rawData', None)
+
+            d = self.conver_update(d)
+
             symbol = d.pop('symbol', None)
             str_datetime = d.pop('datetime', None)
             if symbol not in self.registed_symbol_set or str_datetime is None:
@@ -1592,14 +1602,12 @@ class SubMdApi():
             else:
                 dt = datetime.strptime(str_datetime, '%Y-%m-%d %H:%M:%S')
 
-            d.pop('rawData', None)
             tick = TickData(gateway_name=self.gateway_name,
                             exchange=Exchange(d.get('exchange')),
                             symbol=d.get('symbol'),
                             datetime=dt)
             d.pop('exchange', None)
             d.pop('symbol', None)
-            d.pop()
             tick.__dict__.update(d)
 
             self.symbol_tick_dict[symbol] = tick
@@ -1609,6 +1617,62 @@ class SubMdApi():
         except Exception as ex:
             self.gateway.write_error(u'RabbitMQ on_message 异常:{}'.format(str(ex)))
             self.gateway.write_error(traceback.format_exc())
+
+    def conver_update(self, d):
+        """转换dict， vnpy1 tick dict => vnpy2 tick dict"""
+        if 'vtSymbol' not in d:
+            return d
+        symbol= d.get('symbol')
+        exchange = d.get('exchange')
+        vtSymbol = d.pop('vtSymbol', symbol)
+        if '.' not in symbol:
+            d.update({'vt_symbol': f'{symbol}.{exchange}'})
+        else:
+            d.update({'vt_symbol': f'{symbol}.{Exchange.LOCAL.value}'})
+
+        # 成交数据
+        d.update({'last_price': d.pop('lastPrice',0.0)})  # 最新成交价
+        d.update({'last_volume': d.pop('lastVolume', 0)}) # 最新成交量
+
+        d.update({'open_interest': d.pop('openInterest', 0)})  #  昨持仓量
+
+        d.update({'open_interest': d.pop('tradingDay', get_trading_date())})
+
+
+        # 常规行情
+        d.update({'open_price': d.pop('openPrice', 0)})        # 今日开盘价
+        d.update({'high_price': d.pop('highPrice', 0)})  # 今日最高价
+        d.update({'low_price': d.pop('lowPrice', 0)})  # 今日最低价
+        d.update({'pre_close': d.pop('preClosePrice', 0)})  # 昨收盘价
+        d.update({'limit_up': d.pop('upperLimit', 0)}) # 涨停价
+        d.update({'limit_down': d.pop('lowerLimit', 0)})  # 跌停价
+
+        # 五档行情
+        d.update({'bid_price_1': d.pop('bidPrice1', 0.0)})
+        d.update({'bid_price_2': d.pop('bidPrice2', 0.0)})
+        d.update({'bid_price_3': d.pop('bidPrice3', 0.0)})
+        d.update({'bid_price_4': d.pop('bidPrice4', 0.0)})
+        d.update({'bid_price_5': d.pop('bidPrice5', 0.0)})
+
+        d.update({'ask_price_1': d.pop('askPrice1', 0.0)})
+        d.update({'ask_price_2': d.pop('askPrice2', 0.0)})
+        d.update({'ask_price_3': d.pop('askPrice3', 0.0)})
+        d.update({'ask_price_4': d.pop('askPrice4', 0.0)})
+        d.update({'ask_price_5': d.pop('askPrice5', 0.0)})
+
+        d.update({'bid_volume_1': d.pop('bidVolume1', 0.0)})
+        d.update({'bid_volume_2': d.pop('bidVolume2', 0.0)})
+        d.update({'bid_volume_3': d.pop('bidVolume3', 0.0)})
+        d.update({'bid_volume_4': d.pop('bidVolume4', 0.0)})
+        d.update({'bid_volume_5': d.pop('bidVolume5', 0.0)})
+
+        d.update({'ask_volume_1': d.pop('askVolume1', 0.0)})
+        d.update({'ask_volume_2': d.pop('askVolume2', 0.0)})
+        d.update({'ask_volume_3': d.pop('askVolume3', 0.0)})
+        d.update({'ask_volume_4': d.pop('askVolume4', 0.0)})
+        d.update({'ask_volume_5': d.pop('askVolume5', 0.0)})
+
+        return d
 
     def close(self):
         """退出API"""
